@@ -7,6 +7,7 @@ using namespace std;
 int main() {
     // ejectBadUSB();
     // startDataCollectionBadUSB();
-    // startDataCollectionHuman();
+    startDataCollectionHuman();
+
     return 0;
 }

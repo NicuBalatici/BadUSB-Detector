@@ -19,4 +19,4 @@ add_executable(design src/main.cpp
         include/CollectingDataHuman.h
 )
 
-target_link_libraries(design ${CARBON_LIB} ${APP_SERVICES_LIB})
+target_link_libraries(design ${CARBON_LIB} ${APP_SERVICES_LIB} pcap)
