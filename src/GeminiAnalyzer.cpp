@@ -66,7 +66,7 @@ void GeminiAnalyzer::generateThreatReport(const string& log_filepath) {
 
     string prompt = "You are an elite Cybersecurity Forensic Analyst. My C++ endpoint detection system just intercepted a BadUSB attack on a macOS machine. Here is the raw payload:\n\n" +
                     payload +
-                    "\n\nProvide a concise threat report explaining what this payload is trying to do. Format: 1. Threat Summary";
+                    "\n\nProvide a concise threat report explaining what this payload is trying to do. Format: 1. Threat Summary 2. Step-by-step breakdown 3. Potential Impact.";
 
     json request_json = {
         {"contents", {{
