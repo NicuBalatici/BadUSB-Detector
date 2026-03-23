@@ -8,8 +8,11 @@
 #include <fstream>
 #include <map>
 #include <vector>
+#include <iomanip>
+#include <cstdio>
 #include <ApplicationServices/ApplicationServices.h>
 #include <unistd.h>
+#include "GeminiAnalyzer.h"
 
 using namespace std;
 using namespace std::chrono;
@@ -28,7 +31,8 @@ map<CGKeyCode, Clock::time_point> key_release_ends;
 bool first_key = true;
 Clock::time_point last_key_release_time;
 Clock::time_point t_last_threat_activity = Clock::now();
-string captured_payload;
+
+string pre_catch_payload;
 
 struct KeyData {
     float flight;
@@ -39,33 +43,73 @@ vector<KeyData> window_buffer;
 
 BadUSBDetector* ai_agent = nullptr;
 
+string getCurrentTimestamp() {
+    auto t = time(nullptr);
+    auto tm = *localtime(&t);
+    ostringstream oss;
+    oss << put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
 void showPopup(const string& message) {
     system("killall osascript > /dev/null 2>&1");
+    system("say -v Samantha 'Security Alert. Malicious USB Detected.' &");
     string command = "osascript -e 'display alert \"⚠️ THREAT ISOLATED\" message \"" + message +
                      "\" as critical buttons {\"Locked\"} default button \"Locked\"' &";
     system(command.c_str());
 }
 
-void saveForensics() {
-    if (captured_payload.empty()) return;
-    ofstream out("forensic_log.txt", ios::app);
+bool askUserToViewSecondPopup() {
+    string script = R"(osascript -e 'button returned of (display alert "Threat Neutralized" message "The system has been unlocked. Would you like to view the attack description?" buttons {"No", "Yes"} default button "Yes" as informational)')";
+    FILE* pipe = popen(script.c_str(), "r");
+    if (!pipe) return false;
+
+    char buffer[128];
+    string result = "";
+    while (!feof(pipe)) {
+        if (fgets(buffer, 128, pipe) != NULL)
+            result += buffer;
+    }
+    pclose(pipe);
+
+    return (result.find("Yes") != string::npos);
+}
+
+void savePreCatchForensics() {
+    if (pre_catch_payload.empty()) return;
+
+    ofstream out("badusb_pre_catch.log", ios::app);
     if (out.is_open()) {
-        out << "\n===== ATTACK ISOLATED =====\n" << captured_payload << "\n";
+        out << "\n[" << getCurrentTimestamp() << "] ===== AI TRIGGERED =====\n";
+        out << "Payload executed before detection:\n";
+        out << pre_catch_payload << "\n";
+        out << "========================================\n";
         out.close();
     }
-    captured_payload.clear();
+    pre_catch_payload.clear();
 }
 
 void activateLockdown(const string& source, float threat_score) {
     if (!INPUT_BLOCKED.load()) {
         INPUT_BLOCKED.store(true);
+
+        stringstream ss;
+        ss << fixed << setprecision(2) << (threat_score * 100);
+
         cout << "\n[!!!] " << source << " TRIGGERED LOCKDOWN [!!!]\n";
-        cout << "Threat Confidence: " << (threat_score * 100) << "%\n";
-        saveForensics();
+        cout << "Threat Confidence: " << ss.str() << "%\n";
+
+        savePreCatchForensics();
 
         system("diskutil eject /Volumes/* > /dev/null 2>&1");
 
-        showPopup("Input has been paralyzed. Threat Score: " + to_string(threat_score) + "\n."
+        ofstream q("badusb_post_catch.log", ios::out | ios::app);
+        if (q.is_open()) {
+            q << "\n[" << getCurrentTimestamp() << "] ===== BLOCKED PAYLOAD =====\n";
+        }
+
+        showPopup("Input has been paralyzed!"
+                  "\nThreat Score: " + ss.str() + "%.\n"+
                   "System will unlock after " + to_string(SILENCE_TIMEOUT_SECONDS) + " seconds of silence.");
     }
 }
@@ -77,7 +121,6 @@ void process_window() {
 
     for (const auto& k : window_buffer) {
         float prob = ai_agent->predict(k.flight, k.inter, k.hold);
-
         if (prob > THRESHOLD) {
             malicious_keystroke_count++;
         }
@@ -108,10 +151,11 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
             UniChar chars[4]; UniCharCount len;
             CGEventKeyboardGetUnicodeString(event, 4, &len, chars);
             if (len > 0) {
-                 ofstream q("quarantine_log.txt", ios::out | ios::app);
+                 ofstream q("badusb_post_catch.log", ios::out | ios::app);
                  if (q.is_open()) {
                     char c = (char)chars[0];
-                    if (c == 13) q << "\n"; else q << c;
+                    if (c == 13 || c == 3) q << "\n";
+                    else if (c >= 32 && c <= 126) q << c;
                  }
             }
         }
@@ -128,7 +172,8 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
         CGEventKeyboardGetUnicodeString(event, 4, &len, chars);
         if (len > 0) {
             char c = (char)chars[0];
-            if (c >= 32 || c == 13) captured_payload += (c==13 ? '\n' : c);
+            if (c == 13 || c == 3) pre_catch_payload += '\n';
+            else if (c >= 32 && c <= 126) pre_catch_payload += c;
         }
         key_press_starts[keycode] = now;
     }
@@ -146,6 +191,7 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
 
             if (flight > 2000) {
                 window_buffer.clear();
+                pre_catch_payload.clear();
             }
             else if (flight > 0 && hold > 0) {
                 window_buffer.push_back({flight, inter, hold});
@@ -160,6 +206,21 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
     return event;
 }
 
+string getApiKey() {
+    ifstream file("api_key.txt");
+    string key;
+    if (file.is_open()) {
+        getline(file, key);
+        file.close();
+
+        key.erase(remove(key.begin(), key.end(), '\n'), key.end());
+        key.erase(remove(key.begin(), key.end(), '\r'), key.end());
+    } else {
+        cerr << "[ERROR] Could not find api_key.txt! Make sure it is in your root folder." << endl;
+    }
+    return key;
+}
+
 void monitorUsbLoop() {
     sleep(2);
     int baseline = getUsbDeviceCount();
@@ -172,17 +233,29 @@ void monitorUsbLoop() {
 
             if (quiet > SILENCE_TIMEOUT_SECONDS) {
                 cout << "\n[INFO] Threat Neutralized. Restoring User Control.\n";
-                system("killall osascript > /dev/null 2>&1");
 
-                saveForensics();
+                system("killall osascript > /dev/null 2>&1");
+                system("say -v Samantha 'System secured.' &");
+                savePreCatchForensics();
+
+                INPUT_BLOCKED.store(false);
+
+                if (askUserToViewSecondPopup()) {
+                    cout << "[INFO] Establishing secure C++ connection to Gemini AI...\n";
+
+                    system(R"(osascript -e 'display notification "Generating Native Threat Intelligence Report..." with title "C++ AI Bridge"' &)");
+
+                    GeminiAnalyzer ai_analyst(getApiKey());
+                    ai_analyst.generateThreatReport("badusb_post_catch.log");
+                }else{
+                    cout << "[INFO] Closing Forensic Logs...\n";
+                }
 
                 window_buffer.clear();
                 key_press_starts.clear();
-                captured_payload.clear();
+                pre_catch_payload.clear();
                 first_key = true;
-
                 baseline = getUsbDeviceCount();
-                INPUT_BLOCKED.store(false);
             }
         } else {
             int current = getUsbDeviceCount();

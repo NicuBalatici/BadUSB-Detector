@@ -16,6 +16,7 @@ link_directories(
 
 find_library(CARBON_LIB Carbon)
 find_library(APP_SERVICES_LIB ApplicationServices)
+find_package(CURL REQUIRED)
 
 add_executable(design src/main.cpp
         include/CollectingDataBadUSB.h
@@ -27,11 +28,16 @@ add_executable(design src/main.cpp
         src/CollectingDataHuman.cpp
         include/BadUSBDetector.h
         src/BadUSBDetector.cpp
+        include/GeminiAnalyzer.h
+        src/GeminiAnalyzer.cpp
+        include/GeminiAnalyzer.h
+        src/GeminiAnalyzer.cpp
 )
 
 target_link_libraries(design
         ${CARBON_LIB}
         ${APP_SERVICES_LIB}
+        ${CURL_LIBRARIES}
         pcap
         xgboost
         "-framework ApplicationServices"

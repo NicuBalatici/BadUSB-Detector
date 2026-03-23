@@ -12,6 +12,7 @@ void saveForensics();
 void activateLockdown();
 CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 int ejectBadUSB();
+std::string getApiKey();
 void monitorUsbLoop();
 
 #endif

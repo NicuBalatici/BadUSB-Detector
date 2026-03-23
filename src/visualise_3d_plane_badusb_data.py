@@ -13,10 +13,10 @@ if not os.path.exists(output_dir):
 
 # 2. LOAD DATA
 try:
-    human = pd.read_csv('../data/training_data/human_data.csv', on_bad_lines='skip')
+    human = pd.read_csv('../data_old/training_data/human_data.csv', on_bad_lines='skip')
     human['Label'] = 'Human'
 
-    badusb = pd.read_csv('../data/training_data/badusb_data.csv', on_bad_lines='skip')
+    badusb = pd.read_csv('../data_old/training_data/badusb_data.csv', on_bad_lines='skip')
     badusb['Label'] = 'BadUSB'
 
     badusb = badusb.rename(columns=lambda x: x.replace(';', '').strip())
