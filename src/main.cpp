@@ -5,9 +5,6 @@
 using namespace std;
 
 int main() {
-    // ejectBadUSB();
-    // startDataCollectionBadUSB();
-    startDataCollectionHuman();
-
+    ejectBadUSB();
     return 0;
 }

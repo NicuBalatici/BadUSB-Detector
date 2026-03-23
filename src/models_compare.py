@@ -61,7 +61,8 @@ models = {
     "KNN (k=5)": KNeighborsClassifier(n_neighbors=5),
     "SVM (RBF)": SVC(probability=True, random_state=42),
     "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
-    "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42),
+    # Fixed the warning by removing use_label_encoder=False
+    "XGBoost": XGBClassifier(eval_metric='logloss', random_state=42),
     # The New Neural Network! 2 hidden layers (64 neurons, 32 neurons)
     "Neural Network": MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42)
 }
@@ -96,67 +97,79 @@ for name, model in models.items():
 
 results_df = pd.DataFrame(results)
 
-# =========================================================
 # GRAPH 1: Performance Metrics Bar Chart
-# =========================================================
-print("\nGenerating Metrics Comparison Graph...")
-results_melted = results_df.melt(id_vars="Model", var_name="Metric", value_name="Score")
 
-plt.figure(figsize=(14, 6))  # Made slightly wider to fit 6 names comfortably
-sns.barplot(data=results_melted, x="Model", y="Score", hue="Metric", palette="viridis")
-plt.title("Machine Learning vs Deep Learning: BadUSB Detection", fontsize=16)
-plt.ylim(0.5, 1.05)
-plt.ylabel("Score (0 to 1)")
-plt.legend(loc='lower right')
-plt.grid(axis='y', linestyle='--', alpha=0.7)
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, "1_metrics_comparison.png"))
-plt.close()
+# print("\nGenerating Metrics Comparison Graph...")
+# results_melted = results_df.melt(id_vars="Model", var_name="Metric", value_name="Score")
+#
+# plt.figure(figsize=(14, 6))  # Made slightly wider to fit 6 names comfortably
+# sns.barplot(data=results_melted, x="Model", y="Score", hue="Metric", palette="viridis")
+# plt.title("Machine Learning vs Deep Learning: BadUSB Detection", fontsize=16)
+# plt.ylim(0.5, 1.05)
+# plt.ylabel("Score (0 to 1)")
+# plt.legend(loc='lower right')
+# plt.grid(axis='y', linestyle='--', alpha=0.7)
+# plt.tight_layout()
+# plt.savefig(os.path.join(output_dir, "1_metrics_comparison.png"))
+# plt.close()
 
-# =========================================================
 # GRAPH 2: Combined ROC Curves
-# =========================================================
-print("Generating Combined ROC Curves...")
-plt.figure(figsize=(10, 8))
 
-# Added a 6th color (magenta) for the Neural Net
-colors = ['blue', 'green', 'orange', 'purple', 'red', 'magenta']
-for (name, data), color in zip(roc_data.items(), colors):
-    plt.plot(data['fpr'], data['tpr'], label=f"{name} (AUC = {data['auc']:.3f})", color=color, linewidth=2)
+# print("Generating Combined ROC Curves...")
+# plt.figure(figsize=(10, 8))
+#
+# colors = ['blue', 'green', 'orange', 'purple', 'red', 'magenta']
+# for (name, data), color in zip(roc_data.items(), colors):
+#     plt.plot(data['fpr'], data['tpr'], label=f"{name} (AUC = {data['auc']:.3f})", color=color, linewidth=2)
+#
+# plt.plot([0, 1], [0, 1], 'k--', label='Random Guessing (AUC = 0.500)')
+#
+# plt.title('Receiver Operating Characteristic (ROC) Curves', fontsize=16)
+# plt.xlabel('False Positive Rate (Incorrectly flagging a Human)')
+# plt.ylabel('True Positive Rate (Catching the BadUSB)')
+# plt.legend(loc='lower right', fontsize=12)
+# plt.grid(alpha=0.3)
+# plt.tight_layout()
+# plt.savefig(os.path.join(output_dir, "2_roc_curves.png"))
+# plt.close()
 
-plt.plot([0, 1], [0, 1], 'k--', label='Random Guessing (AUC = 0.500)')
-
-plt.title('Receiver Operating Characteristic (ROC) Curves', fontsize=16)
-plt.xlabel('False Positive Rate (Incorrectly flagging a Human)')
-plt.ylabel('True Positive Rate (Catching the BadUSB)')
-plt.legend(loc='lower right', fontsize=12)
-plt.grid(alpha=0.3)
-plt.tight_layout()
-plt.savefig(os.path.join(output_dir, "2_roc_curves.png"))
-plt.close()
-
-# =========================================================
 # GRAPH 3: Confusion Matrix Grid (Perfect 2x3 now)
-# =========================================================
-print("Generating Confusion Matrix Grid...")
-fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-fig.suptitle('Confusion Matrices by Model', fontsize=20)
-axes = axes.flatten()
 
-for i, (name, cm) in enumerate(cm_data.items()):
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[i],
-                xticklabels=['Human', 'BadUSB'], yticklabels=['Human', 'BadUSB'],
-                cbar=False, annot_kws={"size": 14})
-    axes[i].set_title(name, fontsize=14)
-    axes[i].set_ylabel('Actual Identity')
-    axes[i].set_xlabel('Predicted Identity')
-
-plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-plt.savefig(os.path.join(output_dir, "3_confusion_matrices.png"))
-plt.close()
-
-print(f"\nSuccess! All ML comparison graphs saved to: {output_dir}/")
+# print("Generating Confusion Matrix Grid...")
+# fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+# fig.suptitle('Confusion Matrices by Model', fontsize=20)
+# axes = axes.flatten()
+#
+# for i, (name, cm) in enumerate(cm_data.items()):
+#     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[i],
+#                 xticklabels=['Human', 'BadUSB'], yticklabels=['Human', 'BadUSB'],
+#                 cbar=False, annot_kws={"size": 14})
+#     axes[i].set_title(name, fontsize=14)
+#     axes[i].set_ylabel('Actual Identity')
+#     axes[i].set_xlabel('Predicted Identity')
+#
+# plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+# plt.savefig(os.path.join(output_dir, "3_confusion_matrices.png"))
+# plt.close()
+#
+# print(f"\nSuccess! All ML comparison graphs saved to: {output_dir}/")
 
 # Print Leaderboard to Terminal
 print("\n--- FINAL ML LEADERBOARD ---")
 print(results_df.sort_values(by="ROC-AUC", ascending=False).to_string(index=False))
+
+# =========================================================
+# PART 6: EXPORT FINAL MODEL FOR C++ INFERENCE
+# =========================================================
+# We retrain the winning XGBoost model on the ENTIRE dataset
+# (train + test) to give it maximum knowledge before export.
+
+print("\nRetraining Champion Model (XGBoost) on full dataset for export...")
+final_model = XGBClassifier(eval_metric='logloss', random_state=42)
+
+# Notice we use the unscaled X here, because the C++ agent won't have the scaler!
+final_model.fit(X, y)
+
+export_path = os.path.join(SCRIPT_DIR, "badusb_xgboost.json")
+final_model.save_model(export_path)
+print(f"Export Complete! C++ ready model saved to: {export_path}")
