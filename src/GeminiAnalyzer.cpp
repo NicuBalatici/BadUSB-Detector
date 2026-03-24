@@ -65,8 +65,10 @@ void GeminiAnalyzer::generateThreatReport(const string& log_filepath) {
     }
 
     string prompt = "You are an elite Cybersecurity Forensic Analyst. My C++ endpoint detection system just intercepted a BadUSB attack on a macOS machine. Here is the raw payload:\n\n" +
-                    payload +
-                    "\n\nProvide a concise threat report explaining what this payload is trying to do. Format: 1. Threat Summary 2. Step-by-step breakdown 3. Potential Impact.";
+                payload +
+                "\n\nProvide a concise threat report explaining what this payload is trying to do. "
+                "IMPORTANT: Use only plain text. Do not use Markdown formatting, do not use asterisks for bolding, and do not use hashtags for headers. "
+                "Format: 1. Threat Summary 2. Step-by-step breakdown 3. Potential Impact.";
 
     json request_json = {
         {"contents", {{
@@ -91,9 +93,9 @@ void GeminiAnalyzer::generateThreatReport(const string& log_filepath) {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
 
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
 
-        system("osascript -e 'display dialog \"Analyzing Malicious Payload with Gemini AI...\\n\\nPlease wait while the forensic threat report is generated.\" buttons {} with icon note' &");
+        system("osascript -e 'display dialog \"Analyzing Malicious Payload...\\n\\nPlease wait while the forensic threat report is generated.\" buttons {} with icon note' &");
         std::atomic<bool> is_done(false);
         std::thread loader_thread(showLoadingAnimation, std::ref(is_done));
 
@@ -172,7 +174,6 @@ void GeminiAnalyzer::generateThreatReport(const string& log_filepath) {
         system(command.c_str());
         cout << "[SUCCESS] Diagnostic/Threat Report saved to Desktop: " << desktop_report_path << "\n\n";
 
-        // Final Success Popup
         system("osascript -e 'display alert \"Report Created!\" message \"The AI Threat Intelligence Report has been generated and saved to the \\\"Threat_Reports\\\" folder on your Desktop.\" as informational' &");
 
     } else {
