@@ -32,6 +32,7 @@ add_executable(design src/main.cpp
         src/GeminiAnalyzer.cpp
         include/GeminiAnalyzer.h
         src/GeminiAnalyzer.cpp
+        src/shadow_evaluator.cpp
 )
 
 target_link_libraries(design

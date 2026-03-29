@@ -9,6 +9,7 @@ static const std::string FORENSIC_LOG_FILE   = "/Users/balaticinicolae/Library/C
 
 void showPopup(const std::string& message);
 void saveForensics();
+double marginToProbability(double margin);
 void activateLockdown();
 CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon);
 int ejectBadUSB();

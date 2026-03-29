@@ -13,9 +13,12 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <unistd.h>
 #include "GeminiAnalyzer.h"
+#include "ShadowModels.h"
 
 using namespace std;
 using namespace std::chrono;
+
+void runNativeModelEvaluation();
 
 constexpr int WINDOW_SIZE = 5;
 constexpr double THRESHOLD = 0.75;
@@ -75,6 +78,22 @@ bool askUserToViewSecondPopup() {
     return (result.find("Yes") != string::npos);
 }
 
+bool askUserToViewGraphsPopup() {
+    string script = R"(osascript -e 'button returned of (display alert "Threat Analysis Complete" message "The AI Threat Report has been generated. Would you like to generate and view the live telemetry graphs for this attack?" buttons {"No", "Yes"} default button "Yes" as informational)')";
+    FILE* pipe = popen(script.c_str(), "r");
+    if (!pipe) return false;
+
+    char buffer[128];
+    string result = "";
+    while (!feof(pipe)) {
+        if (fgets(buffer, 128, pipe) != NULL)
+            result += buffer;
+    }
+    pclose(pipe);
+
+    return (result.find("Yes") != string::npos);
+}
+
 void savePreCatchForensics() {
     if (pre_catch_payload.empty()) return;
 
@@ -89,15 +108,17 @@ void savePreCatchForensics() {
     pre_catch_payload.clear();
 }
 
-void activateLockdown(const string& source, float threat_score) {
+double marginToProbability(double margin) {
+    return 1.0 / (1.0 + std::exp(-margin));
+}
+
+void activateLockdown(float xgb_prob, double rf_prob, double svm_prob, double nn_prob, double log_prob) {
     if (!INPUT_BLOCKED.load()) {
         INPUT_BLOCKED.store(true);
 
-        stringstream ss;
-        ss << fixed << setprecision(2) << (threat_score * 100);
+        t_last_threat_activity = Clock::now();
 
-        cout << "\n[!!!] " << source << " TRIGGERED LOCKDOWN [!!!]\n";
-        cout << "Threat Confidence: " << ss.str() << "%\n";
+        cout << "\n[!!!] XGBoost TRIGGERED LOCKDOWN [!!!]\n";
 
         savePreCatchForensics();
 
@@ -108,9 +129,19 @@ void activateLockdown(const string& source, float threat_score) {
             q << "\n[" << getCurrentTimestamp() << "] ===== BLOCKED PAYLOAD =====\n";
         }
 
-        showPopup("Input has been paralyzed!"
-                  "\nThreat Score: " + ss.str() + "%.\n"+
-                  "System will unlock after " + to_string(SILENCE_TIMEOUT_SECONDS) + " seconds of silence.");
+        stringstream ss;
+        ss << "Input has been paralyzed!\n\n";
+        ss << "LIVE AI JURY CONSENSUS (Threat Confidence):\n";
+        ss << fixed << setprecision(1);
+        ss << "• XGBoost (Active): " << (xgb_prob * 100.0) << "%\n";
+        ss << "• Neural Network: " << (nn_prob * 100.0) << "%\n";
+        ss << "• Random Forest: " << (rf_prob * 100.0) << "%\n";
+        ss << "• Support Vector Machine: " << (svm_prob * 100.0) << "%\n";
+        ss << "• Logistic Regression: " << (log_prob * 100.0) << "%\n\n";
+
+        ss << "System will unlock after " << SILENCE_TIMEOUT_SECONDS << " seconds of silence.";
+
+        showPopup(ss.str());
     }
 }
 
@@ -119,64 +150,92 @@ void process_window() {
 
     int malicious_keystroke_count = 0;
 
+    double last_rf_prob = 0, last_svm_prob = 0, last_nn_prob = 0, last_log_prob = 0;
+    float last_xgb_prob = 0;
+
     for (const auto& k : window_buffer) {
-        float prob = ai_agent->predict(k.flight, k.inter, k.hold);
-        if (prob > THRESHOLD) {
+        last_xgb_prob = ai_agent->predict(k.flight, k.inter, k.hold);
+
+        double scaled_features[3];
+        scale_features(k.flight, k.inter, k.hold, scaled_features);
+
+        // Map margins to probabilities (0.0 to 1.0) using the Sigmoid Helper
+        last_log_prob = marginToProbability(predict_logistic_reg(scaled_features));
+        last_svm_prob = marginToProbability(predict_svm(scaled_features));
+
+        // Random Forest outputs an array. We calculate the percentage of trees that voted "Malicious"
+        double rf_output[2];
+        predict_random_forest(scaled_features, rf_output);
+        double total_trees = rf_output[0] + rf_output[1];
+        last_rf_prob = (total_trees == 0) ? 0 : (rf_output[1] / total_trees);
+
+        // Neural Network is already a probability
+        last_nn_prob = predict_neural_network(scaled_features);
+
+        // Terminal Log (Optional: You can change BAD/OK to percentages here too if you want!)
+        cout << "[CONSENSUS] XGB: " << (last_xgb_prob > THRESHOLD ? "BAD" : "OK ")
+             << " | RF: " << (last_rf_prob > 0.5 ? "BAD" : "OK ")
+             << " | SVM: " << (last_svm_prob > 0.5 ? "BAD" : "OK ")
+             << " | NN: " << (last_nn_prob > 0.5 ? "BAD" : "OK ")
+             << " | LogReg: " << (last_log_prob > 0.5 ? "BAD" : "OK ") << "\n";
+
+        if (last_xgb_prob > THRESHOLD) {
             malicious_keystroke_count++;
         }
     }
 
     if (malicious_keystroke_count >= 4) {
-        float confidence = (float)malicious_keystroke_count / WINDOW_SIZE;
-        activateLockdown("XGBoost AI Algorithm", confidence);
+        // Pass the precise math to the visual UI!
+        activateLockdown(last_xgb_prob, last_rf_prob, last_svm_prob, last_nn_prob, last_log_prob);
         window_buffer.clear();
     } else {
         window_buffer.erase(window_buffer.begin());
     }
 }
-
 CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void*) {
 
     if (type == kCGEventTapDisabledByTimeout) {
         if (gTap) CGEventTapEnable(gTap, true);
         return event;
     }
-
-    auto now = Clock::now();
-
-    if (INPUT_BLOCKED.load()) {
-        t_last_threat_activity = now;
-
-        if (type == kCGEventKeyDown) {
-            UniChar chars[4]; UniCharCount len;
-            CGEventKeyboardGetUnicodeString(event, 4, &len, chars);
-            if (len > 0) {
-                 ofstream q("badusb_post_catch.log", ios::out | ios::app);
-                 if (q.is_open()) {
-                    char c = (char)chars[0];
-                    if (c == 13 || c == 3) q << "\n";
-                    else if (c >= 32 && c <= 126) q << c;
-                 }
-            }
-        }
-        return nullptr;
+    if (type != kCGEventKeyDown && type != kCGEventKeyUp) {
+        return INPUT_BLOCKED.load() ? nullptr : event;
     }
 
-    if (type != kCGEventKeyDown && type != kCGEventKeyUp) return event;
-    if (CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat) != 0) return event;
+    if (CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat) != 0) {
+        return INPUT_BLOCKED.load() ? nullptr : event;
+    }
 
+    auto now = Clock::now();
+    bool is_blocked = INPUT_BLOCKED.load();
     CGKeyCode keycode = (CGKeyCode)CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode);
+
+    if (is_blocked) {
+        t_last_threat_activity = now;
+    }
 
     if (type == kCGEventKeyDown) {
         UniChar chars[4]; UniCharCount len;
         CGEventKeyboardGetUnicodeString(event, 4, &len, chars);
+
         if (len > 0) {
             char c = (char)chars[0];
-            if (c == 13 || c == 3) pre_catch_payload += '\n';
-            else if (c >= 32 && c <= 126) pre_catch_payload += c;
+            if (is_blocked) {
+                ofstream q("badusb_post_catch.log", ios::out | ios::app);
+                if (q.is_open()) {
+                    if (c == 13 || c == 3) q << "\n";
+                    else if (c >= 32 && c <= 126) q << c;
+                }
+            } else {
+                if (c == 13 || c == 3) pre_catch_payload += '\n';
+                else if (c >= 32 && c <= 126) pre_catch_payload += c;
+            }
         }
+
         key_press_starts[keycode] = now;
+        return is_blocked ? nullptr : event;
     }
+
     else if (type == kCGEventKeyUp) {
         float hold = 0, flight = 0, inter = 0;
 
@@ -190,17 +249,32 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
             flight = inter - hold;
 
             if (flight > 2000) {
-                window_buffer.clear();
-                pre_catch_payload.clear();
+                if (!is_blocked) {
+                    window_buffer.clear();
+                    pre_catch_payload.clear();
+                }
             }
             else if (flight > 0 && hold > 0) {
-                window_buffer.push_back({flight, inter, hold});
-                if (window_buffer.size() >= WINDOW_SIZE) process_window();
+                if (is_blocked) {
+                    bool is_new = !std::filesystem::exists("catch_telemetry.csv");
+                    ofstream telemetry("catch_telemetry.csv", ios::app);
+
+                    if (telemetry.is_open()) {
+                        if (is_new) telemetry << "flight,inter,hold,xgboost_prob\n";
+                        float prob = ai_agent->predict(flight, inter, hold);
+                        telemetry << flight << "," << inter << "," << hold << "," << prob << "\n";
+                    }
+                } else {
+                    window_buffer.push_back({flight, inter, hold});
+                    if (window_buffer.size() >= WINDOW_SIZE) process_window();
+                }
             }
         }
 
         first_key = false;
         last_key_release_time = now;
+
+        return is_blocked ? nullptr : event;
     }
 
     return event;
@@ -240,15 +314,28 @@ void monitorUsbLoop() {
 
                 INPUT_BLOCKED.store(false);
 
+                // 1. Ask to run Gemini
                 if (askUserToViewSecondPopup()) {
                     cout << "[INFO] Establishing secure C++ connection to Gemini AI...\n";
-
                     system(R"(osascript -e 'display notification "Generating Native Threat Intelligence Report..." with title "C++ AI Bridge"' &)");
 
                     GeminiAnalyzer ai_analyst(getApiKey());
                     ai_analyst.generateThreatReport("badusb_post_catch.log");
-                }else{
+                } else {
                     cout << "[INFO] Closing Forensic Logs...\n";
+                }
+
+                if (askUserToViewGraphsPopup()) {
+                    cout << "[INFO] Generating Live Telemetry Graphs...\n";
+
+                    int ret = system("/usr/local/bin/python3.12 src/visualize_live_metrics.py");
+
+                    if (ret == 0) {
+                        cout << "[INFO] Graphs generated successfully! Opening folder...\n";
+                        system("open images/live_attack_metrics");
+                    } else {
+                        cout << "[ERROR] Failed to generate graphs. Check Python path or script.\n";
+                    }
                 }
 
                 window_buffer.clear();
@@ -269,19 +356,15 @@ void monitorUsbLoop() {
 }
 
 int ejectBadUSB() {
+    // runNativeModelEvaluation();
+
     cout << "=======================================\n";
     cout << " XGBOOST BAD-USB DEFENSE INITIALIZING\n";
     cout << "=======================================\n";
 
     ai_agent = new BadUSBDetector("badusb_xgboost.json");
 
-    CGEventMask mask = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
-                       CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventLeftMouseUp) |
-                       CGEventMaskBit(kCGEventRightMouseDown) | CGEventMaskBit(kCGEventRightMouseUp) |
-                       CGEventMaskBit(kCGEventMouseMoved) |
-                       CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventRightMouseDragged) |
-                       CGEventMaskBit(kCGEventScrollWheel) |
-                       CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventOtherMouseUp);
+    CGEventMask mask = kCGEventMaskForAllEvents;
 
     CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, static_cast<CGEventTapOptions>(0), mask, eventCallbackDisconnect, nullptr);
 
