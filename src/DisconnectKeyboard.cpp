@@ -79,7 +79,7 @@ bool askUserToViewSecondPopup() {
 }
 
 bool askUserToViewGraphsPopup() {
-    string script = R"(osascript -e 'button returned of (display alert "Threat Analysis Complete" message "The AI Threat Report has been generated. Would you like to generate and view the live telemetry graphs for this attack?" buttons {"No", "Yes"} default button "Yes" as informational)')";
+    string script = R"(osascript -e 'button returned of (display alert "Threat Analysis Graphs" message "Would you like to generate and view the live telemetry graphs for this attack?" buttons {"No", "Yes"} default button "Yes" as informational)')";
     FILE* pipe = popen(script.c_str(), "r");
     if (!pipe) return false;
 
@@ -333,10 +333,36 @@ void monitorUsbLoop() {
                 // 1. Ask to run Gemini
                 if (askUserToViewSecondPopup()) {
                     cout << "[INFO] Establishing secure C++ connection to Gemini AI...\n";
-                    system(R"(osascript -e 'display notification "Generating Native Threat Intelligence Report..." with title "C++ AI Bridge"' &)");
 
-                    GeminiAnalyzer ai_analyst(getApiKey());
-                    ai_analyst.generateThreatReport("badusb_post_catch.log");
+                    // NEW: AppleScript with Cancel and OK buttons
+                    string script = R"(osascript -e 'button returned of (display alert "C++ AI Bridge" message "Generating Native Threat Intelligence Report...\n\nClick OK to process this in the background." buttons {"Cancel", "OK"} default button "OK")')";
+                    FILE* pipe = popen(script.c_str(), "r");
+
+                    string result = "";
+                    if (pipe) {
+                        char buffer[128];
+                        while (fgets(buffer, 128, pipe) != NULL) result += buffer;
+                        pclose(pipe);
+                    }
+
+                    if (result.find("OK") != string::npos) {
+                        cout << "[INFO] Gemini AI running in the background...\n";
+
+                        // We grab the key BEFORE the thread to ensure thread-safety
+                        string api_key = getApiKey();
+
+                        // NEW: Spawn a detached thread so it doesn't freeze the main program!
+                        thread gemini_thread([api_key]() {
+                            GeminiAnalyzer ai_analyst(api_key);
+                            ai_analyst.generateThreatReport("badusb_post_catch.log");
+                        });
+
+                        // .detach() cuts the thread loose to run completely independently
+                        gemini_thread.detach();
+
+                    } else {
+                        cout << "[INFO] Gemini Analysis cancelled by user.\n";
+                    }
                 } else {
                     cout << "[INFO] Closing Forensic Logs...\n";
                 }
