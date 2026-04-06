@@ -70,7 +70,7 @@ bool askUserToViewSecondPopup() {
 
     char buffer[128];
     string result = "";
-    while (!feof(pipe)) { // ??????????
+    while (!feof(pipe)) {
         if (fgets(buffer, 128, pipe) != NULL)
             result += buffer;
     }
@@ -86,7 +86,7 @@ bool askUserToViewGraphsPopup() {
 
     char buffer[128];
     string result = "";
-    while (!feof(pipe)) { // ??????????
+    while (!feof(pipe)) {
         if (fgets(buffer, 128, pipe) != NULL)
             result += buffer;
     }
@@ -330,45 +330,26 @@ void monitorUsbLoop() {
                 system("say -v Samantha 'System secured.' &");
                 savePreCatchForensics();
 
-                // 1. INSTANTLY UNLOCK THE SYSTEM
                 INPUT_BLOCKED.store(false);
 
-                // 2. WIPE THE MEMORY IMMEDIATELY
                 window_buffer.clear();
                 key_press_starts.clear();
                 pre_catch_payload.clear();
                 first_key = true;
                 baseline = getUsbDeviceCount();
 
-                // 3. CAPTURE THE CURRENT ATTACK ID
                 int current_attack_id = ATTACK_SEQUENCE_ID.load();
-
-                // 4. PUSH ALL UI & REPORTS INTO A DETACHED THREAD
                 thread ui_recovery_thread([current_attack_id]() {
 
-                    // Safety Check 1
                     if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
-                    // ==========================================
-                    // PHASE 1: THE GEMINI ANALYSIS
-                    // ==========================================
                     if (askUserToViewSecondPopup()) {
 
                         if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
                         cout << "[INFO] Establishing secure C++ connection to Gemini AI...\n";
-
-                        // THE LOADING POPUP (ONLY ONE BUTTON: "OK")
-                        // It will pause the code right here until you click it!
-                        string script = R"(osascript -e 'display alert "C++ AI Bridge" message "The Gemini AI analysis is starting. This may take a few seconds..." buttons {"OK"} default button "OK" as informational')";
-                        system(script.c_str());
-
-                        if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
                         cout << "[INFO] Gemini AI is generating the report. Please wait...\n";
+
                         string api_key = getApiKey();
 
-                        // Runs synchronously. The main code waits until Gemini is done.
                         GeminiAnalyzer ai_analyst(api_key);
                         ai_analyst.generateThreatReport("badusb_post_catch.log");
 
@@ -378,21 +359,14 @@ void monitorUsbLoop() {
                         cout << "[INFO] Gemini Analysis declined by user.\n";
                     }
 
-                    // ==========================================
-                    // PHASE 2: THE TELEMETRY GRAPHS
-                    // ==========================================
                     if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
-                    // This now asks the user ONLY AFTER Gemini has completely finished
                     if (askUserToViewGraphsPopup()) {
 
                         if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
                         cout << "[INFO] Generating Live Telemetry Graphs...\n";
                         int ret = system("/usr/local/bin/python3.12 src/visualize_live_metrics.py");
 
                         if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
                         if (ret == 0) {
                             cout << "[INFO] Graphs generated successfully! Opening folder...\n";
                             system("open images/live_attack_metrics");
@@ -403,21 +377,12 @@ void monitorUsbLoop() {
                         cout << "[INFO] Telemetry Graphs declined by user.\n";
                     }
 
-                    // ==========================================
-                    // PHASE 3: SECURED CONFIRMATION & CLEANUP
-                    // ==========================================
                     if (ATTACK_SEQUENCE_ID.load() != current_attack_id) return;
-
-                    // Show the final reassurance popup
                     showSecuredPopup();
-
-                    // Finally, clear the old files ONLY if we successfully finished without a new attack
                     if (ATTACK_SEQUENCE_ID.load() == current_attack_id) {
                         clearOldForensicFiles();
                     }
                 });
-
-                // Detach the entire recovery process!
                 ui_recovery_thread.detach();
 
             }
