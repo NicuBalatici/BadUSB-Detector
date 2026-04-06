@@ -20,19 +20,19 @@ using namespace std::chrono;
 
 void runNativeModelEvaluation();
 
-constexpr int WINDOW_SIZE = 15;
-constexpr double THRESHOLD = 0.75;
-constexpr int SILENCE_TIMEOUT_SECONDS = 5;
+constexpr int WINDOW_SIZE = 10;             // dictates the AI analyzes blocks of 15 keys
+constexpr double THRESHOLD = 0.75;          // the XGBoost confidence required to trigger a lockdown
+constexpr int SILENCE_TIMEOUT_SECONDS = 5;  // safety timer
 
-atomic<bool> INPUT_BLOCKED{false};
+atomic<bool> INPUT_BLOCKED{false};       // when the AI sets this to true, the macOS Event Tap instantly starts swallowing keystrokes.
 using Clock = steady_clock;
 
-static CFMachPortRef gTap = nullptr;
+static CFMachPortRef gTap = nullptr;        // it holds the active connection to the operating system that intercepts hardware events (keyboard, mouse, etc.) before they reach your apps.
 
 map<CGKeyCode, Clock::time_point> key_press_starts;
 map<CGKeyCode, Clock::time_point> key_release_ends;
 bool first_key = true;
-Clock::time_point last_key_release_time;
+Clock::time_point last_key_release_time;    // a simple timestamp of the moment the previously typed key was released.
 Clock::time_point t_last_threat_activity = Clock::now();
 
 string pre_catch_payload;
@@ -42,14 +42,14 @@ struct KeyData {
     float inter;
     float hold;
 };
-vector<KeyData> window_buffer;
+vector<KeyData> window_buffer;              // it stores the last 15 keystrokes. When it reaches 15, the AI calculates the Mean and Variance (Jitter) of the whole array to decide if the typing pattern is a human or a machine.
 
-BadUSBDetector* ai_agent = nullptr;
+BadUSBDetector* ai_agent = nullptr;         // this holds your active XGBoost Neural Engine in memory
 
 string getCurrentTimestamp() {
     auto t = time(nullptr);
     auto tm = *localtime(&t);
-    ostringstream oss;
+    ostringstream oss;                      // it prints the text into an invisible memory buffer
     oss << put_time(&tm, "%Y-%m-%d %H:%M:%S");
     return oss.str();
 }
@@ -69,7 +69,7 @@ bool askUserToViewSecondPopup() {
 
     char buffer[128];
     string result = "";
-    while (!feof(pipe)) {
+    while (!feof(pipe)) { // ??????????
         if (fgets(buffer, 128, pipe) != NULL)
             result += buffer;
     }
@@ -85,7 +85,7 @@ bool askUserToViewGraphsPopup() {
 
     char buffer[128];
     string result = "";
-    while (!feof(pipe)) {
+    while (!feof(pipe)) { // ??????????
         if (fgets(buffer, 128, pipe) != NULL)
             result += buffer;
     }
@@ -94,7 +94,13 @@ bool askUserToViewGraphsPopup() {
     return (result.find("Yes") != string::npos);
 }
 
-void savePreCatchForensics() {
+void showSecuredPopup() {
+    //we use the '&' at the end so it runs in the background and doesn't freeze the program!
+    string command = R"(osascript -e 'display alert "✅ System Secured" message "All malicious activity has been completely neutralized. Your input devices have been restored and you are safe to resume your work." as informational buttons {"Understood"} default button "Understood"' &)";
+    system(command.c_str());
+}
+
+void savePreCatchForensics() { // it records the keys before the BadUSB is being caught
     if (pre_catch_payload.empty()) return;
 
     ofstream out("badusb_pre_catch.log", ios::app);
@@ -109,9 +115,10 @@ void savePreCatchForensics() {
 }
 
 double marginToProbability(double margin) {
-    return 1.0 / (1.0 + std::exp(-margin));
+    return 1.0 / (1.0 + exp(-margin));
 }
 
+// it handles everything from isolating the threat and preventing data theft to formatting the UI for the user.
 void activateLockdown(float xgb_prob, double rf_prob, double svm_prob, double nn_prob, double log_prob) {
     if (!INPUT_BLOCKED.load()) {
         INPUT_BLOCKED.store(true);
@@ -122,8 +129,9 @@ void activateLockdown(float xgb_prob, double rf_prob, double svm_prob, double nn
 
         savePreCatchForensics();
 
-        system("diskutil eject /Volumes/* > /dev/null 2>&1");
+        system("diskutil eject /Volumes/* > /dev/null 2>&1"); // it tells macOS to forcefully and immediately unmount and eject all connected USB storage drives.
 
+        //
         ofstream q("badusb_post_catch.log", ios::out | ios::app);
         if (q.is_open()) {
             q << "\n[" << getCurrentTimestamp() << "] ===== BLOCKED PAYLOAD =====\n";
@@ -138,7 +146,6 @@ void activateLockdown(float xgb_prob, double rf_prob, double svm_prob, double nn
         ss << "• Random Forest: " << (rf_prob * 100.0) << "%\n";
         ss << "• Support Vector Machine: " << (svm_prob * 100.0) << "%\n";
         ss << "• Logistic Regression: " << (log_prob * 100.0) << "%\n\n";
-
         ss << "System will unlock after " << SILENCE_TIMEOUT_SECONDS << " seconds of silence.";
 
         showPopup(ss.str());
@@ -146,10 +153,9 @@ void activateLockdown(float xgb_prob, double rf_prob, double svm_prob, double nn
 }
 
 void process_window() {
-    if (window_buffer.size() < WINDOW_SIZE) return;
+    if (window_buffer.size() < WINDOW_SIZE) return; // it checks if the window_buffer has collected enough keystrokes (15 keys)
 
     int malicious_keystroke_count = 0;
-
     double last_rf_prob = 0, last_svm_prob = 0, last_nn_prob = 0, last_log_prob = 0;
     float last_xgb_prob = 0;
 
@@ -157,6 +163,8 @@ void process_window() {
         last_xgb_prob = ai_agent->predict(k.flight, k.inter, k.hold);
 
         double scaled_features[3];
+        // mathematically shrinks raw millisecond times into normalized numbers
+        // (usually between -3.0 and 3.0) using the exact same StandardScaler constants exported from Python
         scale_features(k.flight, k.inter, k.hold, scaled_features);
 
         // Map margins to probabilities (0.0 to 1.0) using the Sigmoid Helper
@@ -173,17 +181,18 @@ void process_window() {
         last_nn_prob = predict_neural_network(scaled_features);
 
         // Terminal Log (Optional: You can change BAD/OK to percentages here too if you want!)
-        cout << "[CONSENSUS] XGB: " << (last_xgb_prob > THRESHOLD ? "BAD" : "OK ")
-             << " | RF: " << (last_rf_prob > 0.5 ? "BAD" : "OK ")
-             << " | SVM: " << (last_svm_prob > 0.5 ? "BAD" : "OK ")
-             << " | NN: " << (last_nn_prob > 0.5 ? "BAD" : "OK ")
-             << " | LogReg: " << (last_log_prob > 0.5 ? "BAD" : "OK ") << "\n";
+        cout << "[CONSENSUS] XGB: " << (last_xgb_prob > THRESHOLD ? "BAD" : "SAFE ")
+             << " | RF: " << (last_rf_prob > 0.5 ? "BAD" : "SAFE ")
+             << " | SVM: " << (last_svm_prob > 0.5 ? "BAD" : "SAFE ")
+             << " | NN: " << (last_nn_prob > 0.5 ? "BAD" : "SAFE ")
+             << " | LogReg: " << (last_log_prob > 0.5 ? "BAD" : "SAFE ") << "\n";
 
         if (last_xgb_prob > THRESHOLD) {
             malicious_keystroke_count++;
         }
     }
 
+    //if XGBoost flagged at least 4 of the 15 keystrokes as definitively malicious, the AI drops the hammer.
     if (malicious_keystroke_count >= 4) {
         // Pass the precise math to the visual UI!
         activateLockdown(last_xgb_prob, last_rf_prob, last_svm_prob, last_nn_prob, last_log_prob);
@@ -192,6 +201,7 @@ void process_window() {
         window_buffer.erase(window_buffer.begin());
     }
 }
+
 CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void*) {
 
     if (type == kCGEventTapDisabledByTimeout) {
@@ -214,6 +224,7 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
         t_last_threat_activity = now;
     }
 
+    // saves the keys into badusb_post_catch.log (AFTER the lockdown)
     if (type == kCGEventKeyDown) {
         UniChar chars[4]; UniCharCount len;
         CGEventKeyboardGetUnicodeString(event, 4, &len, chars);
@@ -235,8 +246,7 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
         key_press_starts[keycode] = now;
         return is_blocked ? nullptr : event;
     }
-
-    else if (type == kCGEventKeyUp) {
+    else if (type == kCGEventKeyUp) { //saves the metrics into a new .csv file (catch_telemetry.csv)
         float hold = 0, flight = 0, inter = 0;
 
         if (key_press_starts.count(keycode)) {
@@ -256,7 +266,7 @@ CGEventRef eventCallbackDisconnect(CGEventTapProxy proxy, CGEventType type, CGEv
             }
             else if (flight > 0 && hold > 0) {
                 if (is_blocked) {
-                    bool is_new = !std::filesystem::exists("catch_telemetry.csv");
+                    bool is_new = !filesystem::exists("catch_telemetry.csv");
                     ofstream telemetry("catch_telemetry.csv", ios::app);
 
                     if (telemetry.is_open()) {
@@ -297,8 +307,8 @@ string getApiKey() {
 
 void clearOldForensicFiles() {
     remove("catch_telemetry.csv");
-    remove("badusb_pre_catch.log");
-    remove("badusb_post_catch.log");
+    // remove("badusb_pre_catch.log");
+    // remove("badusb_post_catch.log");
 }
 
 void monitorUsbLoop() {
@@ -343,6 +353,7 @@ void monitorUsbLoop() {
                         cout << "[ERROR] Failed to generate graphs. Check Python path or script.\n";
                     }
                 }
+                showSecuredPopup();
 
                 window_buffer.clear();
                 key_press_starts.clear();
